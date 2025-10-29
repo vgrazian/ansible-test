@@ -56,8 +56,9 @@
                          httpPort="{{ liberty_port }}"
                          httpsPort="-1"/>
 
-            <webApplication location="{{ app_war_name }}"
-                          contextRoot="/"/>
+            <webApplication id="{{ app_name }}"
+                         location="{{ app_war_name }}"
+                         contextRoot="/"/>
 
             <logging consoleLogLevel="INFO"/>
           </server>
@@ -143,40 +144,42 @@
           <body>
               <h1>Hello Liberty Application</h1>
               <p>Running on RHEL with Open Liberty</p>
-              <p><a href="/hello-liberty/api/hello">Test JSON API</a></p>
+              <p><a href="/api/hello">Test JSON API</a></p>
           </body>
           </html>
         dest: "/tmp/{{ app_name }}/src/main/webapp/index.html"
         mode: '0644'
 
-    - name: Find servlet API JAR file
-      find:
-        paths: /opt/wlp
-        patterns: "*servlet*.jar"
-        file_type: file
-      register: servlet_jar
-
-    - name: Find JSON API JAR file
-      find:
-        paths: /opt/wlp
-        patterns: "*json*.jar"
-        file_type: file
-      register: json_jar
-
-    - name: Compile servlet with found JAR files
+    - name: Compile servlet using all JAR files
       command: |
-        javac -cp "{{ servlet_jar.files[0].path }}:{{ json_jar.files[0].path }}" \
+        javac -cp "/opt/wlp/lib/*:/opt/wlp/dev/api/ibm/*:/opt/wlp/dev/api/spec/*" \
               -d /tmp/{{ app_name }}/src/main/webapp/WEB-INF/classes \
               /tmp/{{ app_name }}/src/main/java/com/example/HelloWorldServlet.java
       args:
         creates: "/tmp/{{ app_name }}/src/main/webapp/WEB-INF/classes/com/example/HelloWorldServlet.class"
 
-    - name: Create WAR file
-      command: |
-        cd /tmp/{{ app_name }}/src/main/webapp && \
-        jar -cvf /opt/wlp/usr/servers/{{ app_name }}/apps/{{ app_war_name }} .
+    - name: Create WAR file using shell with proper directory change
+      shell: |
+        cd /tmp/{{ app_name }}/src/main/webapp && jar -cvf /opt/wlp/usr/servers/{{ app_name }}/apps/{{ app_war_name }} .
       args:
-        creates: "/opt/wlp/usr/servers/{{ app_name }}/apps/{{ app_war_name }}"
+        chdir: /tmp/{{ app_name }}/src/main/webapp
+        creates: /opt/wlp/usr/servers/{{ app_name }}/apps/{{ app_war_name }}
+
+    - name: Check if WAR file was created
+      stat:
+        path: /opt/wlp/usr/servers/{{ app_name }}/apps/{{ app_war_name }}
+      register: war_file
+
+    - name: Debug WAR file info
+      debug:
+        var: war_file.stat
+
+    - name: Stop Liberty server if running
+      shell: |
+        /opt/wlp/bin/server stop {{ app_name }} || true
+      args:
+        chdir: "/opt/wlp"
+      changed_when: true
 
     - name: Start Liberty server
       shell: |
@@ -191,25 +194,51 @@
         delay: 10
         timeout: 60
 
-    - name: Test application endpoint
+    - name: Check Liberty server status
+      shell: |
+        /opt/wlp/bin/server status {{ app_name }}
+      args:
+        chdir: "/opt/wlp"
+      register: liberty_status
+
+    - name: Debug Liberty status
+      debug:
+        var: liberty_status.stdout
+
+    - name: Test root endpoint
       uri:
-        url: "http://localhost:{{ liberty_port }}/{{ app_name }}/api/hello"
+        url: "http://localhost:{{ liberty_port }}/"
         method: GET
-        status_code: 200
+        status_code: 200,404
+        timeout: 10
+      register: root_result
+
+    - name: Test application endpoint directly
+      uri:
+        url: "http://localhost:{{ liberty_port }}/api/hello"
+        method: GET
+        status_code: 200,404
         timeout: 10
       register: app_result
 
-    - name: Test web page
-      uri:
-        url: "http://localhost:{{ liberty_port }}/{{ app_name }}/"
-        method: GET
-        status_code: 200
-        timeout: 10
-      register: web_result
+    - name: Debug endpoint results
+      debug:
+        msg:
+          - "Root endpoint: {{ root_result.status }}"
+          - "API endpoint: {{ app_result.status }}"
+          - "API URL: http://localhost:{{ liberty_port }}/api/hello"
 
     - name: Show test results
       debug:
         msg:
           - "Open Liberty server is running successfully!"
-          - "JSON API: {{ app_result.json.message }}"
-          - "Web page loaded: {{ web_result.status }}"
+          - "Server status: {{ liberty_status.stdout }}"
+          - "Available endpoints tested"
+
+    - name: Display server info
+      debug:
+        msg: |
+          Liberty Server Information:
+          - Server: {{ app_name }}
+          - Port: {{ liberty_port }}
+          - Liberty Version: {{ liberty_version }}

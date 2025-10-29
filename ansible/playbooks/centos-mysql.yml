@@ -15,13 +15,56 @@
           - mariadb
         state: present
 
+    - name: Stop any running MariaDB processes forcefully
+      shell: |
+        pkill -9 mysqld || true
+        sleep 3
+      changed_when: true
+
+    - name: Remove existing data directory to start fresh
+      file:
+        path: /var/lib/mysql
+        state: absent
+      ignore_errors: yes
+
+    - name: Create MySQL data directory
+      file:
+        path: /var/lib/mysql
+        state: directory
+        owner: mysql
+        group: mysql
+        mode: '0755'
+
     - name: Initialize MariaDB data directory
       command: mysql_install_db --user=mysql
-      args:
-        creates: /var/lib/mysql/mysql
-      changed_when: false
+      changed_when: true
 
-    - name: Start MariaDB without skip-grant-tables
+    - name: Start MariaDB without password
+      shell: |
+        mysqld_safe --user=mysql --skip-grant-tables --socket=/var/lib/mysql/mysql.sock &
+      changed_when: true
+
+    - name: Wait for MySQL socket
+      wait_for:
+        path: /var/lib/mysql/mysql.sock
+        delay: 10
+        timeout: 60
+
+    - name: Set root password while in skip-grant-tables mode
+      shell: |
+        mysql -uroot -e "FLUSH PRIVILEGES;"
+        mysql -uroot -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '{{ mysql_user_password }}';"
+        mysql -uroot -e "FLUSH PRIVILEGES;"
+      args:
+        executable: /bin/bash
+
+    - name: Stop MariaDB
+      shell: |
+        pkill mysqld
+        sleep 2
+      changed_when: true
+
+    - name: Start MariaDB normally with security
       shell: |
         mysqld_safe --user=mysql --socket=/var/lib/mysql/mysql.sock --port=3306 &
       changed_when: true
@@ -32,18 +75,15 @@
         delay: 10
         timeout: 60
 
-    - name: Secure MariaDB installation and set root password
+    - name: Secure MariaDB installation
       shell: |
-        mysql -uroot -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '{{ mysql_user_password }}';"
-        mysql -uroot -e "DELETE FROM mysql.user WHERE User='';"
-        mysql -uroot -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');"
-        mysql -uroot -e "DROP DATABASE IF EXISTS test;"
-        mysql -uroot -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';"
-        mysql -uroot -e "FLUSH PRIVILEGES;"
+        mysql -uroot -p"{{ mysql_user_password }}" -e "DELETE FROM mysql.user WHERE User='';"
+        mysql -uroot -p"{{ mysql_user_password }}" -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');"
+        mysql -uroot -p"{{ mysql_user_password }}" -e "DROP DATABASE IF EXISTS test;"
+        mysql -uroot -p"{{ mysql_user_password }}" -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';"
+        mysql -uroot -p"{{ mysql_user_password }}" -e "FLUSH PRIVILEGES;"
       args:
         executable: /bin/bash
-      environment:
-        MYSQL_PWD: ""
 
     - name: Create database
       shell: |
