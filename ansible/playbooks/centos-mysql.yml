@@ -1,0 +1,139 @@
+---
+- name: Install and configure MySQL server on CentOS
+  hosts: centos
+  become: yes
+  vars:
+    mysql_database: "testdb"
+    mysql_user: "testuser"
+    mysql_user_password: "userpass123"
+
+  tasks:
+    - name: Install MySQL server
+      dnf:
+        name: 
+          - mysql-server
+          - mysql
+        state: present
+
+    - name: Initialize MySQL data directory
+      command: mysqld --initialize-insecure --user=mysql
+      args:
+        creates: /var/lib/mysql/mysql
+      changed_when: false
+
+    - name: Start MySQL server
+      shell: |
+        mysqld --user=mysql --skip-networking --socket=/var/lib/mysql/mysql.sock &
+      changed_when: true
+
+    - name: Wait for MySQL socket
+      wait_for:
+        path: /var/lib/mysql/mysql.sock
+        delay: 5
+        timeout: 30
+
+    - name: Create database
+      mysql_db:
+        name: "{{ mysql_database }}"
+        state: present
+        login_unix_socket: /var/lib/mysql/mysql.sock
+
+    - name: Create application user with password
+      mysql_user:
+        name: "{{ mysql_user }}"
+        password: "{{ mysql_user_password }}"
+        priv: "{{ mysql_database }}.*:ALL"
+        host: localhost
+        state: present
+        login_unix_socket: /var/lib/mysql/mysql.sock
+
+    - name: Set root password
+      mysql_user:
+        name: root
+        host: localhost
+        password: "{{ mysql_user_password }}"
+        login_unix_socket: /var/lib/mysql/mysql.sock
+        check_implicit_admin: yes
+
+    - name: Stop initial MySQL instance
+      shell: pkill mysqld
+      ignore_errors: yes
+      changed_when: true
+
+    - name: Wait a moment
+      pause:
+        seconds: 3
+
+    - name: Start MySQL with networking
+      shell: |
+        mysqld --user=mysql --socket=/var/lib/mysql/mysql.sock --port=3306 &
+      changed_when: true
+
+    - name: Wait for MySQL port
+      wait_for:
+        port: 3306
+        delay: 5
+        timeout: 30
+
+    - name: Create sample table
+      mysql_query:
+        login_user: root
+        login_password: "{{ mysql_user_password }}"
+        login_unix_socket: /var/lib/mysql/mysql.sock
+        database: "{{ mysql_database }}"
+        query: |
+          CREATE TABLE IF NOT EXISTS users (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(50) NOT NULL,
+            email VARCHAR(100) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          )
+
+    - name: Insert sample data
+      mysql_query:
+        login_user: root
+        login_password: "{{ mysql_user_password }}"
+        login_unix_socket: /var/lib/mysql/mysql.sock
+        database: "{{ mysql_database }}"
+        query: |
+          INSERT IGNORE INTO users (username, email) VALUES 
+          ('alice', 'alice@example.com'),
+          ('bob', 'bob@example.com'),
+          ('charlie', 'charlie@example.com')
+
+    - name: Verify table creation
+      mysql_query:
+        login_user: root
+        login_password: "{{ mysql_user_password }}"
+        login_unix_socket: /var/lib/mysql/mysql.sock
+        database: "{{ mysql_database }}"
+        query: "SHOW TABLES"
+      register: tables_result
+
+    - name: Verify data insertion
+      mysql_query:
+        login_user: root
+        login_password: "{{ mysql_user_password }}"
+        login_unix_socket: /var/lib/mysql/mysql.sock
+        database: "{{ mysql_database }}"
+        query: "SELECT COUNT(*) as user_count FROM users"
+      register: users_result
+
+    - name: Show verification results
+      debug:
+        msg: 
+          - "Database tables: {{ tables_result.query_result }}"
+          - "Number of users: {{ users_result.query_result[0].user_count }}"
+
+    - name: Test MySQL connectivity
+      mysql_query:
+        login_user: "{{ mysql_user }}"
+        login_password: "{{ mysql_user_password }}"
+        login_host: localhost
+        database: "{{ mysql_database }}"
+        query: "SELECT 1 as connection_test"
+      register: connection_test
+
+    - name: Show connection test result
+      debug:
+        msg: "MySQL connection test successful: {{ connection_test.query_result }}"

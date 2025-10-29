@@ -21,6 +21,7 @@ echo "Building node images..."
 podman build -t ubuntu_node ./Containerfiles/ubuntu-node
 podman build -t centos_node ./Containerfiles/centos-node
 podman build -t alpine_node ./Containerfiles/alpine-node
+podman build -t rhel_node ./Containerfiles/rhel-node
 
 # Create network
 echo "Creating lab network..."
@@ -28,7 +29,7 @@ podman network create lab_network 2>/dev/null || true
 
 # Start nodes and setup SSH
 echo "Starting nodes..."
-for node_type in ubuntu centos alpine; do
+for node_type in ubuntu centos alpine rhel; do
     node_name="${node_type}_node"
     echo "Starting $node_name..."
     podman run -d --name $node_name --network lab_network ${node_type}_node

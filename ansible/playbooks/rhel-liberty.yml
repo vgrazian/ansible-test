@@ -1,0 +1,222 @@
+---
+- name: Install Open Liberty and deploy Java application on RHEL
+  hosts: rhel
+  become: yes
+  vars:
+    liberty_version: "23.0.0.9"
+    liberty_port: 9080
+    app_name: "hello-liberty"
+    app_war_name: "hello-liberty.war"
+
+  tasks:
+    - name: Install required packages
+      dnf:
+        name:
+          - java-17-openjdk-devel
+          - wget
+          - unzip
+          - tar
+          - gzip
+        state: present
+
+    - name: Create application directory
+      file:
+        path: "/opt/{{ app_name }}"
+        state: directory
+        mode: '0755'
+
+    - name: Download Open Liberty
+      get_url:
+        url: "https://public.dhe.ibm.com/ibmdl/export/pub/software/openliberty/runtime/release/{{ liberty_version }}/openliberty-{{ liberty_version }}.zip"
+        dest: "/tmp/openliberty-{{ liberty_version }}.zip"
+        mode: '0644'
+
+    - name: Install unzip if not available
+      dnf:
+        name: unzip
+        state: present
+
+    - name: Extract Open Liberty using unzip
+      command: unzip -q /tmp/openliberty-{{ liberty_version }}.zip -d /opt
+      args:
+        creates: "/opt/wlp"
+
+    - name: Create Liberty server
+      command: |
+        /opt/wlp/bin/server create {{ app_name }}
+      args:
+        creates: "/opt/wlp/usr/servers/{{ app_name }}"
+
+    - name: Create server.xml configuration
+      copy:
+        content: |
+          <?xml version="1.0" encoding="UTF-8"?>
+          <server description="{{ app_name }} server">
+            <featureManager>
+              <feature>servlet-6.0</feature>
+              <feature>restfulWS-3.1</feature>
+              <feature>jsonb-3.0</feature>
+            </featureManager>
+            
+            <httpEndpoint id="defaultHttpEndpoint"
+                         host="*"
+                         httpPort="{{ liberty_port }}"
+                         httpsPort="-1"/>
+            
+            <webApplication location="{{ app_war_name }}"
+                          contextRoot="/"/>
+            
+            <logging consoleLogLevel="INFO"/>
+          </server>
+        dest: "/opt/wlp/usr/servers/{{ app_name }}/server.xml"
+        mode: '0644'
+
+    - name: Create simple Java web application structure
+      file:
+        path: "/tmp/{{ app_name }}/src/main/webapp/WEB-INF"
+        state: directory
+        mode: '0755'
+
+    - name: Create web.xml
+      copy:
+        content: |
+          <?xml version="1.0" encoding="UTF-8"?>
+          <web-app version="6.0"
+                   xmlns="https://jakarta.ee/xml/ns/jakartaee"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="https://jakarta.ee/xml/ns/jakartaee
+                   https://jakarta.ee/xml/ns/jakartaee/web-app_6_0.xsd">
+            <display-name>{{ app_name }}</display-name>
+          </web-app>
+        dest: "/tmp/{{ app_name }}/src/main/webapp/WEB-INF/web.xml"
+        mode: '0644'
+
+    - name: Create HelloWorld servlet
+      copy:
+        content: |
+          package com.example;
+          
+          import java.io.*;
+          import jakarta.servlet.*;
+          import jakarta.servlet.http.*;
+          import jakarta.json.*;
+          
+          public class HelloWorldServlet extends HttpServlet {
+              @Override
+              protected void doGet(HttpServletRequest request, HttpServletResponse response)
+                      throws ServletException, IOException {
+                  
+                  response.setContentType("application/json");
+                  response.setCharacterEncoding("UTF-8");
+                  
+                  JsonObject jsonResponse = Json.createObjectBuilder()
+                      .add("message", "Hello from Open Liberty on RHEL!")
+                      .add("server", System.getenv("HOSTNAME") != null ? System.getenv("HOSTNAME") : "{{ ansible_hostname }}")
+                      .add("javaVersion", System.getProperty("java.version"))
+                      .add("timestamp", java.time.Instant.now().toString())
+                      .add("libertyVersion", "{{ liberty_version }}")
+                      .build();
+                  
+                  try (PrintWriter out = response.getWriter()) {
+                      out.print(jsonResponse.toString());
+                  }
+              }
+          }
+        dest: "/tmp/{{ app_name }}/src/main/java/com/example/HelloWorldServlet.java"
+        mode: '0644'
+
+    - name: Create index.html
+      copy:
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Hello Liberty - {{ app_name }}</title>
+              <style>
+                  body { font-family: Arial, sans-serif; margin: 40px; }
+                  .container { max-width: 800px; margin: 0 auto; }
+                  .header { background: #0072c6; color: white; padding: 20px; border-radius: 5px; }
+                  .content { margin: 20px 0; }
+                  .button { background: #0072c6; color: white; padding: 10px 20px; text-decoration: none; border-radius: 3px; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <div class="header">
+                      <h1>Hello Liberty Application</h1>
+                      <p>Running on RHEL with Open Liberty</p>
+                  </div>
+                  <div class="content">
+                      <p>This is a simple Java web application running on Open Liberty.</p>
+                      <p><a class="button" href="/hello-liberty/api/hello">Test JSON API</a></p>
+                  </div>
+              </div>
+          </body>
+          </html>
+        dest: "/tmp/{{ app_name }}/src/main/webapp/index.html"
+        mode: '0644'
+
+    - name: Compile Java classes
+      command: |
+        find /opt/wlp -name "*.jar" | grep -E "(servlet|json)" | head -2 | tr '\n' ':'
+      register: classpath_cmd
+
+    - name: Compile servlets
+      command: |
+        javac -cp "/opt/wlp/dev/api/spec/jakarta.servlet-api-6.0.0.jar:/opt/wlp/dev/api/ibm/jakarta.json-2.1.1.jar" \
+              -d /tmp/{{ app_name }}/WEB-INF/classes \
+              /tmp/{{ app_name }}/src/main/java/com/example/*.java
+      args:
+        creates: "/tmp/{{ app_name }}/WEB-INF/classes/com/example/HelloWorldServlet.class"
+
+    - name: Create WAR file
+      command: |
+        jar -cvf /opt/wlp/usr/servers/{{ app_name }}/apps/{{ app_war_name }} \
+             -C /tmp/{{ app_name }}/src/main/webapp .
+      args:
+        creates: "/opt/wlp/usr/servers/{{ app_name }}/apps/{{ app_war_name }}"
+
+    - name: Start Liberty server
+      shell: |
+        /opt/wlp/bin/server start {{ app_name }}
+      args:
+        chdir: "/opt/wlp"
+      changed_when: true
+
+    - name: Wait for Liberty to start
+      wait_for:
+        port: "{{ liberty_port }}"
+        delay: 10
+        timeout: 60
+
+    - name: Test application endpoint
+      uri:
+        url: "http://localhost:{{ liberty_port }}/{{ app_name }}/api/hello"
+        method: GET
+        status_code: 200
+        timeout: 10
+      register: app_result
+
+    - name: Test web page
+      uri:
+        url: "http://localhost:{{ liberty_port }}/{{ app_name }}/"
+        method: GET
+        status_code: 200
+        timeout: 10
+      register: web_result
+
+    - name: Show test results
+      debug:
+        msg:
+          - "Open Liberty server is running successfully!"
+          - "JSON API: {{ app_result.json.message }}"
+          - "Web page loaded: {{ web_result.status }}"
+
+    - name: Display server info
+      debug:
+        msg: |
+          Liberty Server Information:
+          - Server: {{ app_name }}
+          - Port: {{ liberty_port }}
+          - Java Version: {{ app_result.json.javaVersion }}
+          - Liberty Version: {{ liberty_version }}

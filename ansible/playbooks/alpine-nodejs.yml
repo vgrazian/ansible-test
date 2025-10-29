@@ -1,0 +1,109 @@
+---
+- name: Install and configure Node.js application server on Alpine
+  hosts: alpine
+  become: yes
+  vars:
+    app_port: 3000
+    app_name: "hello-world-app"
+
+  tasks:
+    - name: Install Node.js and npm
+      apk:
+        name:
+          - nodejs
+          - npm
+        state: present
+
+    - name: Create application directory
+      file:
+        path: "/opt/{{ app_name }}"
+        state: directory
+        mode: '0755'
+
+    - name: Create package.json
+      copy:
+        content: |
+          {
+            "name": "{{ app_name }}",
+            "version": "1.0.0",
+            "description": "Simple Hello World Node.js app",
+            "main": "app.js",
+            "scripts": {
+              "start": "node app.js"
+            },
+            "dependencies": {
+              "express": "^4.18.0"
+            }
+          }
+        dest: "/opt/{{ app_name }}/package.json"
+        mode: '0644'
+
+    - name: Create Node.js application
+      copy:
+        content: |
+          const express = require('express');
+          const app = express();
+          const port = {{ app_port }};
+
+          app.get('/', (req, res) => {
+            res.json({
+              message: 'Hello World from Alpine Node!',
+              server: process.env.HOSTNAME || '{{ ansible_hostname }}',
+              platform: process.platform,
+              arch: process.arch,
+              timestamp: new Date().toISOString(),
+              nodeVersion: process.version
+            });
+          });
+
+          app.get('/health', (req, res) => {
+            res.json({ status: 'OK', timestamp: new Date().toISOString() });
+          });
+
+          app.listen(port, '0.0.0.0', () => {
+            console.log(`Server running at http://0.0.0.0:${port}`);
+          });
+        dest: "/opt/{{ app_name }}/app.js"
+        mode: '0644'
+
+    - name: Install npm dependencies
+      npm:
+        path: "/opt/{{ app_name }}"
+        production: yes
+
+    - name: Start Node.js application using node directly
+      shell: |
+        cd /opt/{{ app_name }} && nohup node app.js > /var/log/{{ app_name }}.log 2>&1 &
+      args:
+        executable: /bin/sh
+        chdir: "/opt/{{ app_name }}"
+      changed_when: true
+
+    - name: Wait for application to start
+      wait_for:
+        port: "{{ app_port }}"
+        delay: 5
+        timeout: 30
+
+    - name: Test application endpoint
+      uri:
+        url: "http://localhost:{{ app_port }}/"
+        method: GET
+        status_code: 200
+        timeout: 10
+      register: app_result
+
+    - name: Test health endpoint
+      uri:
+        url: "http://localhost:{{ app_port }}/health"
+        method: GET
+        status_code: 200
+        timeout: 10
+      register: health_result
+
+    - name: Show application test results
+      debug:
+        msg:
+          - "Application server is running successfully!"
+          - "Main endpoint response: {{ app_result.json.message }}"
+          - "Health check: {{ health_result.json.status }}"

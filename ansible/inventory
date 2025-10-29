@@ -2,6 +2,7 @@
 ubuntu_node
 centos_node  
 alpine_node
+rhel_node
 
 [ubuntu]
 ubuntu_node
@@ -12,7 +13,11 @@ centos_node
 [alpine]
 alpine_node
 
+[rhel]
+rhel_node
+
 [multi_os:children]
 ubuntu
 centos
 alpine
+rhel

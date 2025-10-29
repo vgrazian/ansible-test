@@ -1,0 +1,92 @@
+---
+- name: Install and configure Apache HTTP server on Ubuntu
+  hosts: ubuntu
+  become: yes
+  vars:
+    http_port: 8080
+    server_name: "ubuntu-web-server"
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install Apache
+      apt:
+        name: apache2
+        state: present
+
+    - name: Create custom document root
+      file:
+        path: /var/www/custom
+        state: directory
+        mode: '0755'
+
+    - name: Configure Apache to use custom port
+      lineinfile:
+        path: /etc/apache2/ports.conf
+        regexp: '^Listen 80'
+        line: 'Listen {{ http_port }}'
+        backup: yes
+
+    - name: Create virtual host configuration
+      copy:
+        content: |
+          <VirtualHost *:{{ http_port }}>
+              ServerName {{ server_name }}
+              DocumentRoot /var/www/custom
+              <Directory /var/www/custom>
+                  Options Indexes FollowSymLinks
+                  AllowOverride All
+                  Require all granted
+              </Directory>
+              ErrorLog ${APACHE_LOG_DIR}/custom_error.log
+              CustomLog ${APACHE_LOG_DIR}/custom_access.log combined
+          </VirtualHost>
+        dest: /etc/apache2/sites-available/custom.conf
+        backup: yes
+
+    - name: Enable custom site
+      command: a2ensite custom.conf
+
+    - name: Create custom index.html
+      copy:
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Welcome to {{ server_name }}</title>
+          </head>
+          <body>
+              <h1>Hello from Ubuntu Node!</h1>
+              <p>Server: {{ ansible_hostname }}</p>
+              <p>Distribution: {{ ansible_distribution }} {{ ansible_distribution_version }}</p>
+              <p>Port: {{ http_port }}</p>
+              <p>Time: {{ ansible_date_time.iso8601 }}</p>
+          </body>
+          </html>
+        dest: /var/www/custom/index.html
+        mode: '0644'
+
+    - name: Start Apache using init script (container-friendly)
+      command: service apache2 restart
+      changed_when: true
+
+    - name: Wait for Apache to start
+      wait_for:
+        port: "{{ http_port }}"
+        delay: 5
+        timeout: 30
+
+    - name: Test HTTP server
+      uri:
+        url: "http://localhost:{{ http_port }}"
+        method: GET
+        status_code: 200
+        timeout: 10
+      register: http_result
+
+    - name: Show HTTP test result
+      debug:
+        msg: "HTTP server is running successfully! Status: {{ http_result.status }}"

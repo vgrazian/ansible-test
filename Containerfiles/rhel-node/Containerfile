@@ -1,0 +1,25 @@
+FROM redhat/ubi9:latest
+
+RUN dnf update -y && dnf install -y \
+    openssh-server \
+    openssh-clients \
+    sudo \
+    python3 \
+    java-17-openjdk-devel \
+    wget \
+    tar \
+    gzip \
+    && dnf clean all
+
+RUN mkdir -p /run/sshd && mkdir -p /root/.ssh
+
+# Setup SSH
+RUN echo 'root:password' | chpasswd
+RUN ssh-keygen -A
+
+# Allow root login
+RUN sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+
+EXPOSE 22
+
+CMD ["/usr/sbin/sshd", "-D"]
