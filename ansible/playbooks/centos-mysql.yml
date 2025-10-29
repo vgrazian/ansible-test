@@ -1,5 +1,5 @@
 ---
-- name: Install and configure MySQL server on CentOS
+- name: Install and configure MariaDB server on CentOS
   hosts: centos
   become: yes
   vars:
@@ -8,132 +8,96 @@
     mysql_user_password: "userpass123"
 
   tasks:
-    - name: Install MySQL server
+    - name: Install MariaDB server
       dnf:
-        name: 
-          - mysql-server
-          - mysql
+        name:
+          - mariadb-server
+          - mariadb
         state: present
 
-    - name: Initialize MySQL data directory
-      command: mysqld --initialize-insecure --user=mysql
+    - name: Initialize MariaDB data directory
+      command: mysql_install_db --user=mysql
       args:
         creates: /var/lib/mysql/mysql
       changed_when: false
 
-    - name: Start MySQL server
+    - name: Start MariaDB without skip-grant-tables
       shell: |
-        mysqld --user=mysql --skip-networking --socket=/var/lib/mysql/mysql.sock &
-      changed_when: true
-
-    - name: Wait for MySQL socket
-      wait_for:
-        path: /var/lib/mysql/mysql.sock
-        delay: 5
-        timeout: 30
-
-    - name: Create database
-      mysql_db:
-        name: "{{ mysql_database }}"
-        state: present
-        login_unix_socket: /var/lib/mysql/mysql.sock
-
-    - name: Create application user with password
-      mysql_user:
-        name: "{{ mysql_user }}"
-        password: "{{ mysql_user_password }}"
-        priv: "{{ mysql_database }}.*:ALL"
-        host: localhost
-        state: present
-        login_unix_socket: /var/lib/mysql/mysql.sock
-
-    - name: Set root password
-      mysql_user:
-        name: root
-        host: localhost
-        password: "{{ mysql_user_password }}"
-        login_unix_socket: /var/lib/mysql/mysql.sock
-        check_implicit_admin: yes
-
-    - name: Stop initial MySQL instance
-      shell: pkill mysqld
-      ignore_errors: yes
-      changed_when: true
-
-    - name: Wait a moment
-      pause:
-        seconds: 3
-
-    - name: Start MySQL with networking
-      shell: |
-        mysqld --user=mysql --socket=/var/lib/mysql/mysql.sock --port=3306 &
+        mysqld_safe --user=mysql --socket=/var/lib/mysql/mysql.sock --port=3306 &
       changed_when: true
 
     - name: Wait for MySQL port
       wait_for:
         port: 3306
-        delay: 5
-        timeout: 30
+        delay: 10
+        timeout: 60
+
+    - name: Secure MariaDB installation and set root password
+      shell: |
+        mysql -uroot -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '{{ mysql_user_password }}';"
+        mysql -uroot -e "DELETE FROM mysql.user WHERE User='';"
+        mysql -uroot -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');"
+        mysql -uroot -e "DROP DATABASE IF EXISTS test;"
+        mysql -uroot -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';"
+        mysql -uroot -e "FLUSH PRIVILEGES;"
+      args:
+        executable: /bin/bash
+      environment:
+        MYSQL_PWD: ""
+
+    - name: Create database
+      shell: |
+        mysql -uroot -p"{{ mysql_user_password }}" -e "CREATE DATABASE IF NOT EXISTS {{ mysql_database }};"
+      args:
+        executable: /bin/bash
+
+    - name: Create application user with password
+      shell: |
+        mysql -uroot -p"{{ mysql_user_password }}" -e "CREATE USER IF NOT EXISTS '{{ mysql_user }}'@'localhost' IDENTIFIED BY '{{ mysql_user_password }}';"
+        mysql -uroot -p"{{ mysql_user_password }}" -e "GRANT ALL PRIVILEGES ON {{ mysql_database }}.* TO '{{ mysql_user }}'@'localhost';"
+        mysql -uroot -p"{{ mysql_user_password }}" -e "FLUSH PRIVILEGES;"
+      args:
+        executable: /bin/bash
 
     - name: Create sample table
-      mysql_query:
-        login_user: root
-        login_password: "{{ mysql_user_password }}"
-        login_unix_socket: /var/lib/mysql/mysql.sock
-        database: "{{ mysql_database }}"
-        query: |
-          CREATE TABLE IF NOT EXISTS users (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            username VARCHAR(50) NOT NULL,
-            email VARCHAR(100) NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-          )
+      shell: |
+        mysql -uroot -p"{{ mysql_user_password }}" -e "USE {{ mysql_database }}; CREATE TABLE IF NOT EXISTS users (id INT AUTO_INCREMENT PRIMARY KEY, username VARCHAR(50) NOT NULL, email VARCHAR(100) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
+      args:
+        executable: /bin/bash
 
     - name: Insert sample data
-      mysql_query:
-        login_user: root
-        login_password: "{{ mysql_user_password }}"
-        login_unix_socket: /var/lib/mysql/mysql.sock
-        database: "{{ mysql_database }}"
-        query: |
-          INSERT IGNORE INTO users (username, email) VALUES 
-          ('alice', 'alice@example.com'),
-          ('bob', 'bob@example.com'),
-          ('charlie', 'charlie@example.com')
+      shell: |
+        mysql -uroot -p"{{ mysql_user_password }}" -e "USE {{ mysql_database }}; INSERT IGNORE INTO users (username, email) VALUES ('alice', 'alice@example.com'), ('bob', 'bob@example.com'), ('charlie', 'charlie@example.com');"
+      args:
+        executable: /bin/bash
 
     - name: Verify table creation
-      mysql_query:
-        login_user: root
-        login_password: "{{ mysql_user_password }}"
-        login_unix_socket: /var/lib/mysql/mysql.sock
-        database: "{{ mysql_database }}"
-        query: "SHOW TABLES"
+      shell: |
+        mysql -uroot -p"{{ mysql_user_password }}" -e "USE {{ mysql_database }}; SHOW TABLES;"
       register: tables_result
+      args:
+        executable: /bin/bash
 
     - name: Verify data insertion
-      mysql_query:
-        login_user: root
-        login_password: "{{ mysql_user_password }}"
-        login_unix_socket: /var/lib/mysql/mysql.sock
-        database: "{{ mysql_database }}"
-        query: "SELECT COUNT(*) as user_count FROM users"
+      shell: |
+        mysql -uroot -p"{{ mysql_user_password }}" -e "USE {{ mysql_database }}; SELECT COUNT(*) as user_count FROM users;"
       register: users_result
+      args:
+        executable: /bin/bash
 
     - name: Show verification results
       debug:
-        msg: 
-          - "Database tables: {{ tables_result.query_result }}"
-          - "Number of users: {{ users_result.query_result[0].user_count }}"
+        msg:
+          - "Database tables: {{ tables_result.stdout }}"
+          - "Number of users: {{ users_result.stdout }}"
 
-    - name: Test MySQL connectivity
-      mysql_query:
-        login_user: "{{ mysql_user }}"
-        login_password: "{{ mysql_user_password }}"
-        login_host: localhost
-        database: "{{ mysql_database }}"
-        query: "SELECT 1 as connection_test"
+    - name: Test MySQL connectivity with application user
+      shell: |
+        mysql -u"{{ mysql_user }}" -p"{{ mysql_user_password }}" -e "SELECT 1 as connection_test;"
       register: connection_test
+      args:
+        executable: /bin/bash
 
     - name: Show connection test result
       debug:
-        msg: "MySQL connection test successful: {{ connection_test.query_result }}"
+        msg: "MySQL connection test successful: {{ connection_test.stdout }}"

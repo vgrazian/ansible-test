@@ -15,8 +15,6 @@
           - java-17-openjdk-devel
           - wget
           - unzip
-          - tar
-          - gzip
         state: present
 
     - name: Create application directory
@@ -30,11 +28,6 @@
         url: "https://public.dhe.ibm.com/ibmdl/export/pub/software/openliberty/runtime/release/{{ liberty_version }}/openliberty-{{ liberty_version }}.zip"
         dest: "/tmp/openliberty-{{ liberty_version }}.zip"
         mode: '0644'
-
-    - name: Install unzip if not available
-      dnf:
-        name: unzip
-        state: present
 
     - name: Extract Open Liberty using unzip
       command: unzip -q /tmp/openliberty-{{ liberty_version }}.zip -d /opt
@@ -57,25 +50,32 @@
               <feature>restfulWS-3.1</feature>
               <feature>jsonb-3.0</feature>
             </featureManager>
-            
+
             <httpEndpoint id="defaultHttpEndpoint"
                          host="*"
                          httpPort="{{ liberty_port }}"
                          httpsPort="-1"/>
-            
+
             <webApplication location="{{ app_war_name }}"
                           contextRoot="/"/>
-            
+
             <logging consoleLogLevel="INFO"/>
           </server>
         dest: "/opt/wlp/usr/servers/{{ app_name }}/server.xml"
         mode: '0644'
 
-    - name: Create simple Java web application structure
+    - name: Create Java source directory structure
       file:
-        path: "/tmp/{{ app_name }}/src/main/webapp/WEB-INF"
+        path: "/tmp/{{ app_name }}/src/main/java/com/example"
         state: directory
         mode: '0755'
+
+    - name: Create webapp directory structure
+      file:
+        path: "/tmp/{{ app_name }}/src/main/webapp/WEB-INF/classes/com/example"
+        state: directory
+        mode: '0755'
+        recurse: yes
 
     - name: Create web.xml
       copy:
@@ -86,7 +86,14 @@
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                    xsi:schemaLocation="https://jakarta.ee/xml/ns/jakartaee
                    https://jakarta.ee/xml/ns/jakartaee/web-app_6_0.xsd">
-            <display-name>{{ app_name }}</display-name>
+            <servlet>
+              <servlet-name>HelloWorldServlet</servlet-name>
+              <servlet-class>com.example.HelloWorldServlet</servlet-class>
+            </servlet>
+            <servlet-mapping>
+              <servlet-name>HelloWorldServlet</servlet-name>
+              <url-pattern>/api/hello</url-pattern>
+            </servlet-mapping>
           </web-app>
         dest: "/tmp/{{ app_name }}/src/main/webapp/WEB-INF/web.xml"
         mode: '0644'
@@ -95,20 +102,20 @@
       copy:
         content: |
           package com.example;
-          
+
           import java.io.*;
           import jakarta.servlet.*;
           import jakarta.servlet.http.*;
           import jakarta.json.*;
-          
+
           public class HelloWorldServlet extends HttpServlet {
               @Override
               protected void doGet(HttpServletRequest request, HttpServletResponse response)
                       throws ServletException, IOException {
-                  
+
                   response.setContentType("application/json");
                   response.setCharacterEncoding("UTF-8");
-                  
+
                   JsonObject jsonResponse = Json.createObjectBuilder()
                       .add("message", "Hello from Open Liberty on RHEL!")
                       .add("server", System.getenv("HOSTNAME") != null ? System.getenv("HOSTNAME") : "{{ ansible_hostname }}")
@@ -116,7 +123,7 @@
                       .add("timestamp", java.time.Instant.now().toString())
                       .add("libertyVersion", "{{ liberty_version }}")
                       .build();
-                  
+
                   try (PrintWriter out = response.getWriter()) {
                       out.print(jsonResponse.toString());
                   }
@@ -132,47 +139,42 @@
           <html>
           <head>
               <title>Hello Liberty - {{ app_name }}</title>
-              <style>
-                  body { font-family: Arial, sans-serif; margin: 40px; }
-                  .container { max-width: 800px; margin: 0 auto; }
-                  .header { background: #0072c6; color: white; padding: 20px; border-radius: 5px; }
-                  .content { margin: 20px 0; }
-                  .button { background: #0072c6; color: white; padding: 10px 20px; text-decoration: none; border-radius: 3px; }
-              </style>
           </head>
           <body>
-              <div class="container">
-                  <div class="header">
-                      <h1>Hello Liberty Application</h1>
-                      <p>Running on RHEL with Open Liberty</p>
-                  </div>
-                  <div class="content">
-                      <p>This is a simple Java web application running on Open Liberty.</p>
-                      <p><a class="button" href="/hello-liberty/api/hello">Test JSON API</a></p>
-                  </div>
-              </div>
+              <h1>Hello Liberty Application</h1>
+              <p>Running on RHEL with Open Liberty</p>
+              <p><a href="/hello-liberty/api/hello">Test JSON API</a></p>
           </body>
           </html>
         dest: "/tmp/{{ app_name }}/src/main/webapp/index.html"
         mode: '0644'
 
-    - name: Compile Java classes
-      command: |
-        find /opt/wlp -name "*.jar" | grep -E "(servlet|json)" | head -2 | tr '\n' ':'
-      register: classpath_cmd
+    - name: Find servlet API JAR file
+      find:
+        paths: /opt/wlp
+        patterns: "*servlet*.jar"
+        file_type: file
+      register: servlet_jar
 
-    - name: Compile servlets
+    - name: Find JSON API JAR file
+      find:
+        paths: /opt/wlp
+        patterns: "*json*.jar"
+        file_type: file
+      register: json_jar
+
+    - name: Compile servlet with found JAR files
       command: |
-        javac -cp "/opt/wlp/dev/api/spec/jakarta.servlet-api-6.0.0.jar:/opt/wlp/dev/api/ibm/jakarta.json-2.1.1.jar" \
-              -d /tmp/{{ app_name }}/WEB-INF/classes \
-              /tmp/{{ app_name }}/src/main/java/com/example/*.java
+        javac -cp "{{ servlet_jar.files[0].path }}:{{ json_jar.files[0].path }}" \
+              -d /tmp/{{ app_name }}/src/main/webapp/WEB-INF/classes \
+              /tmp/{{ app_name }}/src/main/java/com/example/HelloWorldServlet.java
       args:
-        creates: "/tmp/{{ app_name }}/WEB-INF/classes/com/example/HelloWorldServlet.class"
+        creates: "/tmp/{{ app_name }}/src/main/webapp/WEB-INF/classes/com/example/HelloWorldServlet.class"
 
     - name: Create WAR file
       command: |
-        jar -cvf /opt/wlp/usr/servers/{{ app_name }}/apps/{{ app_war_name }} \
-             -C /tmp/{{ app_name }}/src/main/webapp .
+        cd /tmp/{{ app_name }}/src/main/webapp && \
+        jar -cvf /opt/wlp/usr/servers/{{ app_name }}/apps/{{ app_war_name }} .
       args:
         creates: "/opt/wlp/usr/servers/{{ app_name }}/apps/{{ app_war_name }}"
 
@@ -211,12 +213,3 @@
           - "Open Liberty server is running successfully!"
           - "JSON API: {{ app_result.json.message }}"
           - "Web page loaded: {{ web_result.status }}"
-
-    - name: Display server info
-      debug:
-        msg: |
-          Liberty Server Information:
-          - Server: {{ app_name }}
-          - Port: {{ liberty_port }}
-          - Java Version: {{ app_result.json.javaVersion }}
-          - Liberty Version: {{ liberty_version }}
