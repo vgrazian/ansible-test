@@ -1,0 +1,74 @@
+FROM debian:12
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    # Core Ansible and Python
+    ansible \
+    python3 \
+    python3-pip \
+    python3-venv \
+    # SSH and remote access
+    ssh \
+    sshpass \
+    openssh-client \
+    # Network tools
+    curl \
+    wget \
+    telnet \
+    netcat-openbsd \
+    dnsutils \
+    iputils-ping \
+    net-tools \
+    # System utilities
+    vim \
+    nano \
+    less \
+    tree \
+    htop \
+    file \
+    jq \
+    yamllint \
+    # Version control
+    git \
+    # Compression tools
+    zip \
+    unzip \
+    gzip \
+    tar \
+    # Process monitoring
+    procps \
+    psmisc \
+    # Database clients (optional but useful)
+    default-mysql-client \
+    postgresql-client \
+    sqlite3 \
+    # Additional useful packages
+    ca-certificates \
+    apt-transport-https \
+    gnupg \
+    lsb-release \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create SSH directory
+RUN mkdir -p /root/.ssh
+
+# SSH config for container environment
+RUN echo "StrictHostKeyChecking no" > /root/.ssh/config
+RUN echo "UserKnownHostsFile /dev/null" >> /root/.ssh/config
+
+# Create useful aliases
+RUN echo "alias ll='ls -la'" >> /root/.bashrc
+RUN echo "alias l='ls -la'" >> /root/.bashrc
+RUN echo "alias ..='cd ..'" >> /root/.bashrc
+RUN echo "alias ...='cd ../..'" >> /root/.bashrc
+
+# Create a welcome message
+RUN echo "echo '=== Ansible Lab Controller ==='" >> /root/.bashrc
+RUN echo "echo 'Available nodes: ubuntu_node, centos_node, alpine_node'" >> /root/.bashrc
+RUN echo "echo 'Quick commands: ansible all -m ping, ansible-playbook playbooks/ping.yml'" >> /root/.bashrc
+
+WORKDIR /ansible
+
+CMD ["/bin/bash"]

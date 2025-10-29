@@ -1,0 +1,8 @@
+---
+- name: Test and gather node information
+  hosts: all
+  gather_facts: yes
+  tasks:
+    - name: Display hostname and OS
+      ansible.builtin.debug:
+        msg: "Node {{ inventory_hostname }} is running {{ ansible_distribution }} {{ ansible_distribution_version }}"

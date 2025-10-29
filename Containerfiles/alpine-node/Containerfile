@@ -1,0 +1,21 @@
+FROM alpine:3.18
+
+RUN apk update && apk add \
+    openssh-server \
+    openssh-client \
+    sudo \
+    python3 \
+    && rm -rf /var/cache/apk/*
+
+RUN mkdir -p /run/sshd && mkdir -p /root/.ssh
+
+# Setup SSH
+RUN echo 'root:password' | chpasswd
+RUN ssh-keygen -A
+
+# Allow root login
+RUN sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+
+EXPOSE 22
+
+CMD ["/usr/sbin/sshd", "-D"]

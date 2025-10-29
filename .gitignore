@@ -1,0 +1,101 @@
+# SSH Keys and sensitive files
+keys/
+!keys/.gitkeep
+*.key
+*.pem
+*.crt
+*.csr
+*.p12
+*.pfx
+
+# Ansible Vault files
+*.vault
+.vault_pass
+vault_password
+ansible/vault_password
+
+# Podman/Docker artifacts
+*.tar
+*.tar.gz
+containers/
+podman/
+
+# Temporary files
+*.tmp
+*.temp
+*~
+.*.swp
+.*.swo
+\#*#
+.\#*
+
+# Log files
+*.log
+logs/
+ansible/*.retry
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Inventory overrides (if any)
+inventory_*
+hosts_*
+
+# Local configuration overrides
+ansible/local.yml
+ansible/group_vars/local
+ansible/host_vars/local
+
+# Terraform (if used in future)
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+
+# Packer (if used in future)
+packer_cache/
+*.box
+
+# Node.js (if used in future)
+node_modules/
+npm-debug.log*
+
+# Let's Encrypt (if used)
+letsencrypt/
+.acme.sh/
+
+# Keep the main inventory but ignore generated ones
+!ansible/inventory
+inventory_generated
+
+# Ignore any generated scripts
+scripts/.node_count
