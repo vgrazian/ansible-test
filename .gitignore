@@ -99,3 +99,14 @@ inventory_generated
 
 # Ignore any generated scripts
 scripts/.node_count
+
+# Ansible Navigator artifacts
+ansible-navigator.log*
+ansible-navigator.yml
+ansible-navigator.v1
+.navigator/
+artifacts/
+*.artifact*
+playbook-artifacts/
+~/.cache/ansible-navigator/
+*-artifact-*.json
