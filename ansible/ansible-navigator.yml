@@ -1,0 +1,11 @@
+---
+ansible-navigator:
+  execution-environment:
+    enabled: true
+    image: quay.io/ansible/community-ee:latest
+    pull-policy: missing
+    container-engine: auto
+    
+  ansible:
+    inventory:
+      - ./inventory
